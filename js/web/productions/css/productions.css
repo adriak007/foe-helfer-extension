@@ -35,6 +35,11 @@
 	width: 20px;
 	height: 20px;
 }
+#Productions .show-entity.active img,
+#ProductionsRatingBody tr .show-all.active img {
+	opacity: 1;
+	filter: none;
+}
 #Productions table tr.building-type td {
 	padding-top: 15px;
 }

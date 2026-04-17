@@ -583,6 +583,7 @@ let Productions = {
 			let type = Productions.Types[0]
 			let firstTabContent = Productions.buildTableByType(type)
 			$("#Productions #"+type).html(firstTabContent)
+			Productions.syncMapHighlightButtons();
 
 			// fill other tables on demand
 			$('.production-tabs li, #Productions .typeBoost').click(function() {
@@ -591,6 +592,7 @@ let Productions = {
 				if ($("#Productions #"+type).html().length === 0) {
 					let content = Productions.buildTableByType(type)
 					$("#Productions #"+type).html(content).promise().done(() => {
+						Productions.syncMapHighlightButtons();
 
 						$('#Productions .typeBoost').click(function(e) {
 							e.preventDefault()
@@ -599,6 +601,7 @@ let Productions = {
 							if ($("#Productions #"+type).html().length === 0) {
 								let content = Productions.buildTableByType(type)
 								$("#Productions #"+type).html(content)
+								Productions.syncMapHighlightButtons();
 								$('.TSinactive').tableSorter()
 								$('.TSinactive').removeClass('TSinactive')
 								HTML.FilterTable('#Productions .filterCurrentList')
@@ -1731,42 +1734,59 @@ let Productions = {
 	 *
 	 * @param ids
 	 */
+	syncMapHighlightButtons: () => {
+		if (typeof CityMap === 'undefined' || !CityMap.getHighlightSelection) return;
+
+		const selection = CityMap.getHighlightSelection();
+
+		$('#Productions .show-entity').each((_, button) => {
+			button.classList.toggle('active', selection.ids.includes(String(button.dataset.id)));
+		});
+
+		$('#ProductionsRatingBody .show-all').each((_, button) => {
+			button.classList.toggle('active', selection.names.includes(String(button.dataset.name || '').trim()));
+		});
+	},
+
 	ShowOnMap: (ids) => {
-		let IDArray = (ids.length !== undefined ? ids : [ids]);
+		let IDArray = CityMap.normalizeHighlightSelection(ids);
+
+		if (IDArray.length === 0) return;
+
+		CityMap.ensureHighlightSelectionContext();
 
 		if( $('#citymap-main').length < 1 )
 			CityMap.init(null);
 
-		$('#grid-outer').removeClass('desaturate');
-		$('[data-id]').removeClass('highlighted');
+		let activeSelection = CityMap.getHighlightSelection();
+		let removeSelection = IDArray.every(id => activeSelection.ids.includes(id));
+		let nextIds = (removeSelection
+			? activeSelection.ids.filter(id => !IDArray.includes(id))
+			: activeSelection.ids.concat(IDArray.filter(id => !activeSelection.ids.includes(id))));
+
+		CityMap.setHighlightSelection({ ids: nextIds });
+		Productions.syncMapHighlightButtons();
 
 		setTimeout(() => {
-			$('#grid-outer').addClass('desaturate');
-			for (let i = 0; i < IDArray.length; i++) {
-				let target = document.querySelector('.entity[data-id="' + IDArray[i] + '"]')
-				if (target) {
-					let targetStyle = window.getComputedStyle(document.querySelector('.entity[data-id="' + IDArray[i] + '"]'))
-					let tLeft = (parseInt(targetStyle.getPropertyValue("left").replace("px","")) - 100)
-					let tTop = (parseInt(targetStyle.getPropertyValue("top").replace("px","")) - 100)
-					// todo: andere perspektive beachten, andere werte benutzen?
-
-					if (i === 0) $('#map-container').scrollTo({left: tLeft, top: tTop}, 800, { easing: 'swing' });
-					target.classList.add('highlighted');
-				}
-            }
+			CityMap.applyHighlightSelection({ scroll: !removeSelection });
 		}, 500);
 	},
 
 
 	ShowSearchOnMap: (name) => {
+		let searchName = String(name || '').trim();
+		if (searchName === '') return;
+
+		CityMap.ensureHighlightSelectionContext();
+
 		if( $('#citymap-main').length < 1 )
 			CityMap.init(null);
 
-		$('#grid-outer').removeClass('desaturate');
+		let isActive = CityMap.toggleHighlightSelection('name', searchName);
+		Productions.syncMapHighlightButtons();
 
 		setTimeout(() => {
-			CityMap.filterBuildings(name)
-			$('#BuildingsFilter').attr('value',name)
+			CityMap.applyHighlightSelection({ scroll: isActive });
 		}, 500);
 	},
 
@@ -2305,7 +2325,8 @@ let Productions = {
 				SaveSettings("inventorybuildings")
 			});
 
-			$('.show-all').on('click', function () {
+			$('.show-all').on('click', function (e) {
+				e.stopPropagation();
 				Productions.ShowSearchOnMap($(this).attr('data-name'))
 			});
 
@@ -2344,6 +2365,7 @@ let Productions = {
 			if (Productions.efficiencySettings.inventorybuildings !== $('#inventorybuildings').is(':checked')) $('#inventorybuildings').trigger("click")
 			if (Productions.efficiencySettings.gBs !== $('#gBs').is(':checked')) $('#gBs').trigger("click")
 			if (Productions.efficiencySettings.showLimited !== $('#showLimited').is(':checked')) $('#showLimited').trigger("click")
+			Productions.syncMapHighlightButtons();
 
 			$('#findMetaBuilding').on('input', function () {
 				let regEx=new RegExp($(this).val(),"i");

@@ -70,6 +70,11 @@ let CityMap = {
 		buildingAreas: [],
 		buildingTypes: []
 	},
+	highlightSelection: {
+		ids: [],
+		names: []
+	},
+	highlightSelectionContext: null,
 
 	AscendingBuildings: new Promise((resolve) => {
 		let timer = () => {
@@ -82,10 +87,127 @@ let CityMap = {
 		timer()
 	  }),
 
+	normalizeHighlightSelection: (values) => {
+		if (values === undefined || values === null) return [];
+
+		return [...new Set((Array.isArray(values) ? values : [values])
+			.map(value => String(value).trim())
+			.filter(value => value !== ''))];
+	},
+
+	getHighlightSelection: () => ({
+		ids: [...CityMap.highlightSelection.ids],
+		names: [...CityMap.highlightSelection.names]
+	}),
+
+	ensureHighlightSelectionContext: () => {
+		if (CityMap.highlightSelectionContext === ActiveMap) return;
+
+		CityMap.highlightSelectionContext = ActiveMap;
+		CityMap.setHighlightSelection({ ids: [], names: [] });
+	},
+
+	setHighlightSelection: ({ ids, names } = {}) => {
+		if (ids !== undefined) {
+			CityMap.highlightSelection.ids = CityMap.normalizeHighlightSelection(ids);
+		}
+
+		if (names !== undefined) {
+			CityMap.highlightSelection.names = CityMap.normalizeHighlightSelection(names);
+		}
+	},
+
+	toggleHighlightSelection: (type, value) => {
+		const selectionKey = (type === 'name' ? 'names' : 'ids');
+		const normalizedValue = CityMap.normalizeHighlightSelection(value)[0];
+
+		if (!normalizedValue) return false;
+
+		const selection = CityMap.highlightSelection[selectionKey];
+		const index = selection.indexOf(normalizedValue);
+
+		if (index > -1) {
+			selection.splice(index, 1);
+			return false;
+		}
+
+		selection.push(normalizedValue);
+		return true;
+	},
+
+	isEntityHighlighted: (entity) => {
+		const selectedIds = CityMap.highlightSelection.ids;
+		const selectedNames = CityMap.highlightSelection.names;
+
+		if (selectedIds.length === 0 && selectedNames.length === 0) {
+			return false;
+		}
+
+		let entityId = '';
+		let title = '';
+		let size = '';
+
+		if (entity?.nodeType === 1) {
+			entityId = String(entity.getAttribute('data-id') || entity.getAttribute('data-entityid') || '');
+			title = entity.getAttribute('data-title') || entity.getAttribute('data-original-title') || '';
+			size = entity.getAttribute('data-size') || '';
+		}
+		else {
+			entityId = String(entity?.id || entity?.entityId || '');
+			title = entity?.name || '';
+			size = entity?.size ? `${entity.size.length}x${entity.size.width}` : '';
+		}
+
+		if (selectedIds.includes(entityId)) {
+			return true;
+		}
+
+		if (selectedNames.length === 0) {
+			return false;
+		}
+
+		const searchable = `${title},${size}`.toLowerCase();
+		return selectedNames.some(name => searchable.includes(name.toLowerCase()));
+	},
+
+	applyHighlightSelection: ({ scroll = false, syncFilter = true } = {}) => {
+		const entities = $('#grid-outer span.entity');
+		const hasSelection = (CityMap.highlightSelection.ids.length > 0 || CityMap.highlightSelection.names.length > 0);
+
+		entities.removeClass('highlighted');
+		$('#grid-outer').toggleClass('desaturate', hasSelection);
+
+		if (!hasSelection) {
+			if (syncFilter && $('#BuildingsFilter').length > 0) {
+				$('#BuildingsFilter').val('');
+			}
+			return;
+		}
+
+		entities.each((_, entity) => {
+			if (CityMap.isEntityHighlighted(entity)) {
+				entity.classList.add('highlighted');
+			}
+		});
+
+		if (syncFilter && $('#BuildingsFilter').length > 0) {
+			$('#BuildingsFilter').val(CityMap.highlightSelection.names.length === 1 ? CityMap.highlightSelection.names[0] : '');
+		}
+
+		if (scroll) {
+			const firstHighlighted = $('#grid-outer span.highlighted').first();
+			if (firstHighlighted.length > 0) {
+				$('#map-container').scrollTo(firstHighlighted, 800, {offset: {left: -280, top: -280}, easing: 'swing'});
+			}
+		}
+	},
+
 	/**
 	 * @param event
 	 */
 	init: (event)=> {
+		CityMap.ensureHighlightSelectionContext();
+
 		let Title = i18n('Boxes.CityMap.YourCity');
 
 		// grid sizing and view
@@ -631,7 +753,6 @@ let CityMap = {
 			return;
 		}
 
-		let ActiveId = $('#grid-outer').find('.highlighted').data('entityid') || null;
 
 		// einmal komplett leer machen, wenn gewünscht
 		$('#grid-outer').find('.map-bg').remove();
@@ -807,8 +928,7 @@ let CityMap = {
                 }
 			}
 
-			// size changed, activate again
-			if (ActiveId !== null && ActiveId === building.id) {
+			if (CityMap.isEntityHighlighted(building)) {
 				f.addClass('highlighted');
 			}
 
@@ -820,6 +940,7 @@ let CityMap = {
 
 		$('#grid-outer').draggable();
 		CityMap.getAreas();
+		CityMap.applyHighlightSelection({ syncFilter: false });
 		
 		$('[data-original-title]').tooltip({
 			container: '#citymap-main',
@@ -1129,19 +1250,16 @@ let CityMap = {
 
 
 	filterBuildings: (string) => {
-		let spans = $('span.entity');
-		if (/[0-9]+x[0-9]*/.test(string)) string = ","+string
-		for (sp of spans) {
-			let title = $(sp).attr('data-title') +","+ $(sp).attr('data-size');
-			if ((string !== "") && (title.substr(0,title.toLowerCase().indexOf(string.toLowerCase()) > -1))) {
-				$(sp).addClass('highlighted');
-			} else {
-				$(sp).removeClass('highlighted');
-			}
-		}
-		$('#grid-outer').addClass('desaturate');
-		if (string === '') {
-			$('#grid-outer').removeClass('desaturate');
+		CityMap.ensureHighlightSelectionContext();
+
+		CityMap.setHighlightSelection({
+			ids: [],
+			names: CityMap.normalizeHighlightSelection(string)
+		});
+		CityMap.applyHighlightSelection({ syncFilter: false });
+
+		if (typeof Productions !== 'undefined' && Productions.syncMapHighlightButtons) {
+			Productions.syncMapHighlightButtons();
 		}
 	},
 
